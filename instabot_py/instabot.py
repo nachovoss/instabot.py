@@ -41,16 +41,20 @@ for modname in required_modules:
         # try to import the module normally and put it in globals
         globals()[modname] = importlib.import_module(modname)
     except ImportError as e:
-        if modname is not "fake_useragent":
+        if modname != "fake_useragent":
             print(
-                f"Failed to load module {modname}. Make sure you have installed correctly dependencies in requirements.txt."
+                f"Failed to load module {modname}. Make sure you have installed correctly all dependencies."
             )
+            if modname == "instaloader":
+                print(
+                    f"If instaloader keeps failing and you are running this script on a Raspberry, please visit this project's Wiki on GitHub (https://github.com/instabot-py/instabot.py/wiki) for more information."
+                )
             quit()
 
 
 class InstaBot:
     """
-    Instabot.py version 1.2.3
+    Instabot.py version 1.2.4
 
     """
 
@@ -172,6 +176,7 @@ class InstaBot:
         unfollow_inactive=True,
         unfollow_probably_fake=True,
         unfollow_selebgram=False,
+        unfollow_everyone=False,
         # False = disabled, None = Will use default username.session notation, string = will use that as filename
         comment_list=[
             ["this", "the", "your"],
@@ -262,6 +267,9 @@ class InstaBot:
         except:
             fake_ua = random.sample(list_of_ua, 1)
             self.user_agent = check_and_insert_user_agent(self, str(fake_ua[0]))
+
+        self.current_version = 1_553_611_447
+
         self.bot_start = datetime.datetime.now()
         self.bot_start_ts = time.time()
         self.start_at_h = start_at_h
@@ -275,11 +283,14 @@ class InstaBot:
         self.unfollow_whitelist = unfollow_whitelist
         self.comment_list = comment_list
         self.instaloader = instaloader.Instaloader()
+
+        # Unfollow Criteria & Options
         self.unfollow_recent_feed = unfollow_recent_feed
         self.unfollow_not_following = unfollow_not_following
         self.unfollow_inactive = unfollow_inactive
         self.unfollow_probably_fake = unfollow_probably_fake
         self.unfollow_selebgram = unfollow_selebgram
+        self.unfollow_everyone = unfollow_everyone
 
         self.time_in_day = 24 * 60 * 60
         # Like
@@ -343,10 +354,11 @@ class InstaBot:
         self.media_on_feed = []
         self.media_by_user = []
         self.current_user_info = ""
+        self.current_owner = ""
         self.unwanted_username_list = unwanted_username_list
         now_time = datetime.datetime.now()
         self.check_for_bot_update()
-        log_string = "Instabot v1.2.3/0 started at %s:" % (
+        log_string = "Instabot v1.2.5/0 started at %s:" % (
             now_time.strftime("%d.%m.%Y %H:%M")
         )
         self.write_log(log_string)
@@ -363,10 +375,9 @@ class InstaBot:
         try:
             # CHANGE THIS TO OFFICIAL REPO IF KEPT
             updated_timestamp = self.c.get(self.instabot_repo_update)
-            current_version_timestamp = open("version.txt", "r")
-            if int(updated_timestamp.text) > int(current_version_timestamp.read()):
+            if int(updated_timestamp.text) > self.current_version:
                 self.write_log(
-                    ">>> UPDATE AVAILABLE <<< Please update Instabot. You are running an older version."
+                    "> UPDATE AVAILABLE Please update Instabot 'python3 -m pip install instabot-py --upgrade' "
                 )
             else:
                 self.write_log("You are running the latest stable version")
@@ -1064,7 +1075,9 @@ class InstaBot:
         sys.exit(0)
 
     def remove_already_liked(self):
-        self.write_log("Removing already liked medias..")
+        # This logstring has caused TOO many questions, it serves no good telling them
+        # duplicates are removed -- this is expected behaviour after all
+        # self.write_log("Removing already liked medias..")
         x = 0
         while x < len(self.media_by_tag):
             if (
@@ -1104,7 +1117,7 @@ class InstaBot:
                 self.write_log("Trying to unlike media")
                 self.auto_unlike()
                 self.next_iteration["Unlike"] = time.time() + self.add_time(
-                    self.unfollow_delay
+                    self.unlike_per_day
                 )
 
     def new_auto_mod_follow(self):
@@ -1252,6 +1265,9 @@ class InstaBot:
             is False
         ):
             comment_text = self.generate_comment()
+            if "@username@" in comment_text:
+                comment_text = comment_text.replace("@username@", self.current_owner)
+
             log_string = f"Trying to comment: {self.media_by_tag[0]['node']['id']}"
             self.write_log(log_string)
             if (
@@ -1295,6 +1311,11 @@ class InstaBot:
                 )["entry_data"]["PostPage"][
                     0
                 ]  # window._sharedData = (.*?);
+
+                self.current_owner = all_data["graphql"]["shortcode_media"]["owner"][
+                    "username"
+                ]
+
                 if (
                     all_data["graphql"]["shortcode_media"]["owner"]["id"]
                     == self.user_id
@@ -1343,7 +1364,7 @@ class InstaBot:
                 self.media_by_tag.remove(self.media_by_tag[0])
                 return True
         except:
-            self.write_log("Couldn't comment post, resuming.")
+            self.write_log(f"Couldn't comment post, resuming. {url_check}")
             del self.media_by_tag[0]
             return True
 
@@ -1379,11 +1400,11 @@ class InstaBot:
                 log_string = "api limit reached from instagram. Will try later"
                 self.write_log(log_string)
                 return False
-            for wluser in self.unfollow_whitelist:
-                if wluser == current_user:
-                    log_string = "found whitelist user, starting search again"
-                    self.write_log(log_string)
-                    break
+            if current_user in self.unfollow_whitelist:
+                log_string = "found whitelist user, not unfollowing"
+                # problem, if just one user in unfollowlist -> might create inf. loop. therefore just skip round
+                self.write_log(log_string)
+                return False
             else:
                 checking = False
 
@@ -1439,41 +1460,41 @@ class InstaBot:
                         if self.unfollow_selebgram is True:
                             self.is_selebgram = True
                             self.is_fake_account = False
-                            self.write_log("   >>>This is probably Selebgram account")
+                            self.write_log("   >This is probably Selebgram account")
 
                     elif follower == 0 or follows / follower > 2:
                         if self.unfollow_probably_fake is True:
                             self.is_fake_account = True
                             self.is_selebgram = False
-                            self.write_log("   >>>This is probably Fake account")
+                            self.write_log("   >This is probably Fake account")
                     else:
                         self.is_selebgram = False
                         self.is_fake_account = False
-                        self.write_log("   >>>This is a normal account")
+                        self.write_log("   >This is a normal account")
 
                     if media > 0 and follows / media < 25 and follower / media < 25:
                         self.is_active_user = True
-                        self.write_log("   >>>This user is active")
+                        self.write_log("   >This user is active")
                     else:
                         if self.unfollow_inactive is True:
                             self.is_active_user = False
-                            self.write_log("   >>>This user is passive")
+                            self.write_log("   >This user is passive")
 
                     if follow_viewer or has_requested_viewer:
                         self.is_follower = True
-                        self.write_log("   >>>This account is following you")
+                        self.write_log("   >This account is following you")
                     else:
                         if self.unfollow_not_following is True:
                             self.is_follower = False
-                            self.write_log("   >>>This account is NOT following you")
+                            self.write_log("   >This account is NOT following you")
 
                     if followed_by_viewer or requested_by_viewer:
                         self.is_following = True
-                        self.write_log("   >>>You are following this account")
+                        self.write_log("   >You are following this account")
 
                     else:
                         self.is_following = False
-                        self.write_log("   >>>You are NOT following this account")
+                        self.write_log("   >You are NOT following this account")
 
                 except:
                     logging.exception("Except on auto_unfollow!")
@@ -1492,6 +1513,9 @@ class InstaBot:
                 self.unfollow(current_id)
                 # don't insert unfollow count as it is done now inside unfollow()
                 # insert_unfollow_count(self, user_id=current_id)
+            elif self.unfollow_everyone is True:
+                self.write_log(current_user)
+                self.unfollow(current_id)
             elif self.is_following is not True:
                 # we are not following this account, hence we unfollowed it, let's keep track
                 insert_unfollow_count(self, user_id=current_id)
@@ -1562,38 +1586,38 @@ class InstaBot:
                     if follows == 0 or follower / follows > 2:
                         self.is_selebgram = True
                         self.is_fake_account = False
-                        self.write_log("   >>>This is probably Selebgram account")
+                        self.write_log("   >This is probably Selebgram account")
 
                     elif follower == 0 or follows / follower > 2:
                         self.is_fake_account = True
                         self.is_selebgram = False
-                        self.write_log("   >>>This is probably Fake account")
+                        self.write_log("   >This is probably Fake account")
                     else:
                         self.is_selebgram = False
                         self.is_fake_account = False
-                        self.write_log("   >>>This is a normal account")
+                        self.write_log("   >This is a normal account")
 
                     if media > 0 and follows / media < 25 and follower / media < 25:
                         self.is_active_user = True
-                        self.write_log("   >>>This user is active")
+                        self.write_log("   >This user is active")
                     else:
                         self.is_active_user = False
-                        self.write_log("   >>>This user is passive")
+                        self.write_log("   >This user is passive")
 
                     if follow_viewer or has_requested_viewer:
                         self.is_follower = True
-                        self.write_log("   >>>This account is following you")
+                        self.write_log("   >This account is following you")
                     else:
                         self.is_follower = False
-                        self.write_log("   >>>This account is NOT following you")
+                        self.write_log("   >This account is NOT following you")
 
                     if followed_by_viewer or requested_by_viewer:
                         self.is_following = True
-                        self.write_log("   >>>You are following this account")
+                        self.write_log("   >You are following this account")
 
                     else:
                         self.is_following = False
-                        self.write_log("   >>>You are NOT following this account")
+                        self.write_log("   >You are NOT following this account")
 
                 except:
                     logging.exception("Except on auto_unfollow!")
