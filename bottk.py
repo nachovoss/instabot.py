@@ -7,7 +7,7 @@ from PIL import ImageTk, Image
 
 
 window = Tk()
-window.title('Instabot3000 by nacho vossler')
+window.title('Instabot3000 interface by Nachovoss')
 window['bg'] = 'pink'
 filename=PhotoImage(file = "C:\\Users\\User\\Desktop\\instabot.py-U\\instabot.py-master\\instalogo.png")
 
